@@ -1,0 +1,41 @@
+/* 车间工艺卡 / 配方单 视觉 token
+ * 牛皮纸 oklch(0.94 0.02 80) · 油墨蓝黑 oklch(0.30 0.03 250) · 批注红 oklch(0.55 0.18 30)
+ * 双字体：Fraunces（标题/正文衬线）+ Space Mono（数字/表格/工号）
+ */
+:root {
+  --paper: oklch(0.94 0.02 80);
+  --paper-raised: oklch(0.965 0.014 82);
+  --paper-deep: oklch(0.905 0.026 78);
+  --ink: oklch(0.30 0.03 250);
+  --ink-soft: oklch(0.46 0.025 250);
+  --ink-faint: oklch(0.30 0.03 250 / 0.42);
+  --ink-line: oklch(0.30 0.03 250 / 0.22);
+  --ink-line-strong: oklch(0.30 0.03 250 / 0.55);
+  --annot: oklch(0.55 0.18 30);
+  --annot-soft: oklch(0.55 0.18 30 / 0.12);
+  --ok: oklch(0.45 0.09 155);
+  --ok-soft: oklch(0.45 0.09 155 / 0.14);
+  --warn: oklch(0.62 0.12 72);
+  --warn-soft: oklch(0.62 0.12 72 / 0.18);
+
+  --font-display: 'Fraunces', 'Songti SC', serif;
+  --font-mono: 'Space Mono', 'Courier New', monospace;
+
+  --step-0: clamp(0.78rem, 0.74rem + 0.2vw, 0.86rem);
+  --step-1: clamp(0.92rem, 0.86rem + 0.3vw, 1.02rem);
+  --step-2: clamp(1.1rem, 1rem + 0.5vw, 1.3rem);
+  --step-3: clamp(1.45rem, 1.2rem + 1vw, 2rem);
+  --step-4: clamp(2rem, 1.5rem + 2vw, 3.1rem);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 18px;
+  --space-5: 26px;
+  --space-6: 38px;
+  --space-7: 56px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --rail: 92px;
+  --margin-col: 292px;
+}
