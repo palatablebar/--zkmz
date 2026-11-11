@@ -2,6 +2,7 @@
 from src.models.user import User
 from src.models.feature import FeatureDef, FeatureVersion
 from src.models.event import EntityEvent
+from src.models.event_ledger import EventLedger
 from src.models.label import LabelSet, LabelRow
 from src.models.sample import SampleJob, SampleRow
 from src.models.backfill import BackfillTask
@@ -12,6 +13,7 @@ __all__ = [
     "FeatureDef",
     "FeatureVersion",
     "EntityEvent",
+    "EventLedger",
     "LabelSet",
     "LabelRow",
     "SampleJob",

@@ -2,7 +2,9 @@
 
 运行链路口径：
 1. 建 job 时冻结 ``params_snapshot``（标签集、特征版本、边界、范围），用于审计；
-2. 运行时重新读取「当前特征定义」计算——所以 owner 修正边界策略后重跑立即生效；
+2. 运行时**始终按创建时冻结的特征口径重算**——从快照重建 ``FeatureSpec`` 与边界
+   策略，不再重读「当前特征定义」；owner 事后修正边界/窗口只影响新建任务，老任务
+   每次重跑都复现创建时的结果（可重现、可审计）；
 3. ``pit_engine`` 真算每个 ``(entity, label_time)`` × 每个特征的聚合并检测泄漏；
 4. 结果落 ``sample_row``（逐样本特征 JSON + 泄漏标记）与 ``sample_job.result_json``。
 """
@@ -18,6 +20,7 @@ from src.models import EntityEvent, FeatureDef, LabelRow, LabelSet, SampleJob, S
 from src.services import feature_service
 from src.services.pit_engine import (
     Event,
+    FeatureSpec,
     LabelRow as EngineLabelRow,
     PitFailure,
     build_report,
@@ -116,7 +119,7 @@ def create_job(db: Session, payload, user) -> SampleJob:
         "engine_version": "1.0.0",
         "label_set_ids": payload.label_set_ids,
         "label_set_codes": [item.code for item in label_sets],
-        "features": feature_service.snapshot_for_job(specs),
+        "features": _snapshot_with_ids(specs),
         "boundary_policy": boundary_policy,
         "range_start": iso_z(range_start),
         "range_end": iso_z(range_end),
@@ -143,11 +146,47 @@ def create_job(db: Session, payload, user) -> SampleJob:
     return job
 
 
+def _snapshot_with_ids(specs: list[FeatureSpec]) -> list[dict]:
+    """冻结特征口径，并把 feature_id 写进快照供重算时还原标识。"""
+    return [
+        {**item, "feature_id": spec.id}
+        for item, spec in zip(feature_service.snapshot_for_job(specs), specs)
+    ]
+
+
 def _effective_boundary(features: Iterable[FeatureDef]) -> str:
     policies = {feature.boundary_policy for feature in features}
     if BoundaryPolicy.INCLUSIVE.value in policies:
         return BoundaryPolicy.INCLUSIVE.value
     return BoundaryPolicy.STRICT.value
+
+
+def specs_from_snapshot(snapshot: dict) -> list[FeatureSpec]:
+    """从建任务时冻结的参数快照重建 FeatureSpec（重算口径的唯一来源）。
+
+    老任务的快照可能缺少 ``feature_id`` 字段，按 code 回查当前定义补 id——仅用于
+    填充引擎不参与计算的标识，窗口/边界/聚合等计算口径一律以快照为准。
+    """
+    frozen = snapshot.get("features") or []
+    if not frozen:
+        raise PitFailure(FailureReason.NO_FEATURE.value, "参数快照缺少特征口径，无法按创建时口径重算", {})
+    specs: list[FeatureSpec] = []
+    for index, item in enumerate(frozen):
+        specs.append(
+            FeatureSpec(
+                id=int(item.get("feature_id") or -(index + 1)),
+                code=str(item["code"]),
+                name=str(item.get("name", item["code"])),
+                window_seconds=int(item["window_seconds"]),
+                window_label=str(item["window_label"]),
+                boundary=str(item["boundary_policy"]),
+                aggregate=str(item["aggregate_kind"]),
+                event_type=item.get("event_type"),
+                amount_min=item.get("amount_min"),
+                description="",
+            )
+        )
+    return specs
 
 
 # --------------------------------------------------------------------------- #
@@ -188,7 +227,9 @@ def execute_job(db: Session, job: SampleJob) -> SampleJob:
         if range_end is None and snapshot.get("range_end"):
             range_end = parse_range(snapshot["range_end"], "range_end")
 
-        specs = feature_service.to_specs(db, list(job.feature_ids or []))
+        # 始终按创建时冻结的特征口径重算，不重读当前特征定义
+        specs = specs_from_snapshot(snapshot)
+        frozen_boundary = snapshot.get("boundary_policy") or job.boundary_policy
         label_rows = _label_rows_in_range(db, list(job.label_set_ids or []))
         if range_start is not None:
             label_rows = [row for row in label_rows if row.label_time >= range_start]
@@ -213,10 +254,12 @@ def execute_job(db: Session, job: SampleJob) -> SampleJob:
             )
             for row in label_rows
         ]
-        report_payload = build_report(specs, events, engine_rows, None, MATRIX_LIMIT)
+        report_payload = build_report(specs, events, engine_rows, frozen_boundary, MATRIX_LIMIT)
 
         db.execute(delete(SampleRow).where(SampleRow.job_id == job.id))
-        for sample in report_payload.pop("_samples", None) or _rebuild_samples(specs, events, engine_rows):
+        for sample in report_payload.pop("_samples", None) or _rebuild_samples(
+            specs, events, engine_rows, frozen_boundary
+        ):
             db.add(
                 SampleRow(
                     job_id=job.id,
@@ -240,9 +283,8 @@ def execute_job(db: Session, job: SampleJob) -> SampleJob:
             **report_payload,
             "run_snapshot": {
                 "features": feature_service.snapshot_for_job(specs),
-                "boundary_policy": _effective_boundary(
-                    feature_service.validate_feature_ids(db, list(job.feature_ids or []))
-                ),
+                "boundary_policy": frozen_boundary,
+                "snapshot_source": "params_snapshot",
                 "engine": "pit_engine",
                 "executed_at": iso_z(utcnow()),
                 "label_rows": len(engine_rows),
@@ -280,11 +322,11 @@ def execute_job(db: Session, job: SampleJob) -> SampleJob:
         return job
 
 
-def _rebuild_samples(specs, events, engine_rows):
+def _rebuild_samples(specs, events, engine_rows, effective_boundary=None):
     """build_report 只返回矩阵（截断）；落库要全量样本，所以再算一次纯样本。"""
     from src.services.pit_engine import build_samples
 
-    built = build_samples(specs, events, engine_rows, None)
+    built = build_samples(specs, events, engine_rows, effective_boundary)
     return built["samples"]
 
 

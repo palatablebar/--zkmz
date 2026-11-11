@@ -240,28 +240,27 @@ def _ensure_label_rows(db: Session, label_set: LabelSet, rows: list[dict]) -> in
 
 
 def _ensure_events(db: Session, rows: list[dict]) -> int:
-    inserted = 0
-    existing = {
-        (row.entity_key, row.event_type, row.event_ts)
-        for row in db.scalars(select(EntityEvent))
-    }
-    for row in rows:
-        key = (row["entity_key"], row["event_type"], row["event_ts"])
-        if key in existing:
-            continue
-        db.add(
-            EntityEvent(
-                entity_key=row["entity_key"],
-                event_type=row["event_type"],
-                event_ts=row["event_ts"],
-                amount=row["amount"],
-                channel=row.get("channel", "app"),
-                source_ref=row.get("source_ref", ""),
-                is_seed=True,
-            )
-        )
-        inserted += 1
-    return inserted
+    """事件经 append-only 台账接入：delivery_id 幂等，重复投递只生效一次。
+
+    台账重放后由 event_ingest_service 物化到 entity_event，因此事件计数口径与
+    旧实现直接写 entity_event 完全一致（1200 条，自然键唯一）。
+    """
+    from src.services import event_ingest_service
+
+    deliveries = [
+        {
+            "delivery_id": f"SEED-{row['source_ref']}",
+            "entity_key": row["entity_key"],
+            "event_type": row["event_type"],
+            "event_ts": row["event_ts"],
+            "amount": row["amount"],
+            "channel": row.get("channel", "app"),
+            "source_ref": row.get("source_ref", ""),
+        }
+        for row in rows
+    ]
+    result = event_ingest_service.ingest_deliveries(db, deliveries, batch_id="SEED-INITIAL", is_seed=True)
+    return result["appended"]
 
 
 # --------------------------------------------------------------------------- #
@@ -396,7 +395,8 @@ def _ensure_sample_job(db: Session, code: str, name: str, label_sets, feature_id
             "engine_version": "1.0.0",
             "label_set_ids": label_sets,
             "label_set_codes": [s.code for s in db.scalars(select(LabelSet).where(LabelSet.id.in_(label_sets)))],
-            "features": feature_service.snapshot_for_job(specs),
+            "features": sample_service._snapshot_with_ids(specs),
+            "boundary_policy": sample_service._effective_boundary(features),
             "range_start": iso_z(range_start),
             "range_end": iso_z(range_end),
             "matrix_limit": sample_service.MATRIX_LIMIT,

@@ -1,7 +1,7 @@
 """Feature backfill task + full/incremental consistency result."""
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, func
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.config.database import Base
@@ -17,7 +17,12 @@ class BackfillTask(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     range_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     range_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 旧字段：范围中点水位（已废弃——按事件时间中点切分会裁掉窗口历史）。
+    # 保留仅供历史报告展示，新逻辑以 baseline_cutoff_seq 为准。
     base_watermark: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 上次成功运行固定下来的台账水位（event_ledger.seq）；None = 首次运行，无基准。
+    baseline_cutoff_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    baseline_event_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     feature_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     full_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
     incremental_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)

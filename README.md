@@ -47,9 +47,16 @@
 ### B. 多窗口聚合 + 全量/增量一致性 —— `backend/src/services/agg_engine.py`
 
 * **窗口**：`1d` / `7d` / `30d`，每窗口统计 `cnt` / `amount_sum` / `amount_max` / `last_ts`。
-* **两遍计算**：
-  * full = 范围内全部事件重算；
-  * incremental = 基准快照（事件时间 ≤ 基准水位）+ 新增事件（> 水位，含迟到事件）按窗口合并。
+* **事件台账（`event_ledger`）**：所有上游投递（新增/更正/撤销）先写 append-only 台账，
+  每行带单调 `seq` 与唯一 `delivery_id`；`entity_event` 是台账重放后的物化视图。
+  同一 `delivery_id` 的重复投递在落库层与重放层都**只生效一次**。
+* **两遍计算（不再按范围中点切事件）**：
+  * full = 台账重放到当前 seq 的完整规范化事件状态（含范围起点之前的窗口历史）；
+  * incremental = **固定上次成功运行的台账水位** `baseline_cutoff_seq` 得到基准事件状态，
+    再合并该水位之后到达的新增/更正/撤销；迟到事件按业务时间正确进入对应窗口。
+* **批次对平**：新批次出现重复投递、撤销缺失、改写基准内事件任一情况即判定未对平；
+  未对平时**保留上一次回填结果**（checksum/水位不覆盖，任务置失败），并在
+  `last_reconciliation` 与「投递对账」面板说明每条被忽略/撤销/替换的记录影响了哪些样本。
 * **校验**：逐样本把特征 JSON 规范化（`json.dumps(sort_keys=True)`）后取 `md5`，
   比较两遍的 md5；输出**差异样本数**、**首个差异位置**、**不一致原因分类**
   （`window_boundary` / `out_of_order` / `duplicate_event`）。
@@ -57,11 +64,15 @@
 * **负例对照**：把窗口右端人为放宽 60s 重算一遍，用同一个比对器必须报出差异并归因
   `window_boundary`——证明「相等」不是比对器空转。
 
-两个算法都能独立自测：
+样本任务的配套口径：建任务时冻结的 `params_snapshot.features` 是重算的唯一来源，
+重跑始终按**创建时的窗口/边界/聚合口径**计算，事后修改特征定义不影响历史任务的可重现性。
+
+两个算法都能独立自测，纯引擎逻辑另有标准库 `unittest` 套件：
 
 ```bash
 docker compose exec -T backend python -m src.services.pit_engine
 docker compose exec -T backend python -m src.services.agg_engine
+docker compose exec -T backend python -m unittest discover -s tests -v
 ```
 
 ## 4. 快速启动

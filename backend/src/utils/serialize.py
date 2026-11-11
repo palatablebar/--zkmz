@@ -118,6 +118,8 @@ def backfill_out(task) -> dict:
         "range_start": iso_z(task.range_start),
         "range_end": iso_z(task.range_end),
         "base_watermark": iso_z(task.base_watermark),
+        "baseline_cutoff_seq": task.baseline_cutoff_seq,
+        "baseline_event_count": task.baseline_event_count,
         "feature_ids": task.feature_ids or [],
         "full_checksum": task.full_checksum,
         "incremental_checksum": task.incremental_checksum,

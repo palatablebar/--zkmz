@@ -21,6 +21,8 @@ class BackfillOut(BaseModel):
     range_start: str | None
     range_end: str | None
     base_watermark: str | None
+    baseline_cutoff_seq: int | None
+    baseline_event_count: int | None
     feature_ids: list[int]
     full_checksum: str | None
     incremental_checksum: str | None

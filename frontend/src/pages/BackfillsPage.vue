@@ -3,7 +3,7 @@
     <PageHeader
       op="04"
       title="回填一致性"
-      sub="回填任务比较「全量重算」与「基准快照 + 增量合并」的逐样本特征 JSON md5；不变量 full == incremental。"
+      sub="回填任务固定上次成功运行的事件台账水位，比较「全量重算」与「基准快照 + 新增/更正/撤销合并」的逐样本特征 JSON md5；不变量 full == incremental。"
     >
       <template #seal>
         <div>{{ tasks.length }} 个回填任务</div>
@@ -77,6 +77,36 @@
 
     <ChecksumPanel :report="active?.report ?? null" />
 
+    <section class="card" v-if="active?.report?.last_reconciliation">
+      <div class="card-title"><h2>未对平诊断</h2><span class="op-index">retained previous result</span></div>
+      <div class="notice">
+        <strong>{{ active.report.last_reconciliation.message }}</strong>
+        <span class="small" style="display: block; margin-top: 4px">
+          发生于 {{ active.report.last_reconciliation.at }} ·
+          问题投递 {{ active.report.last_reconciliation.issue_count }} 条 ·
+          基准 seq {{ active.report.last_reconciliation.baseline_cutoff_seq ?? '—' }} /
+          当前 seq {{ active.report.last_reconciliation.current_cutoff_seq }}
+        </span>
+      </div>
+      <table v-if="active.report.last_reconciliation.issues.length">
+        <thead>
+          <tr><th>seq</th><th>原因</th><th>明细</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="issue in active.report.last_reconciliation.issues" :key="issue.seq">
+            <td class="mono">{{ issue.seq }}</td>
+            <td><span class="tag tag-annot">{{ ISSUE_LABEL[issue.reason] ?? issue.reason }}</span></td>
+            <td class="mono small">{{ JSON.stringify(issue.detail) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <LedgerImpactPanel
+      v-if="active?.report && (active.report.ledger_impact ?? []).length > 0"
+      :items="active.report.ledger_impact"
+    />
+
     <section class="card" v-if="active?.report">
       <div class="card-title"><h2>差异明细</h2><span class="op-index">first diff</span></div>
       <p v-if="(active.report.differences ?? []).length === 0" class="muted small">
@@ -109,8 +139,9 @@
       <div class="margin-note">
         <span class="stamp">批注 · 005</span>
         <p>
-          增量重算 = 基准水位前的快照 + 水位后新增事件（含迟到事件）按窗口合并；
-          合并口径与全量必须逐样本 md5 相同，否则标记 inconsistent。
+          增量重算 = 固定上次成功运行的台账水位（基准事件状态，含窗口历史）+
+          水位之后到达的新增/更正/撤销；重复 delivery_id 只生效一次。
+          新批次未对平时保留旧结果，checksum 不覆盖。
         </p>
       </div>
       <div class="margin-note" style="color: var(--ink-soft); border-left-color: var(--ink-line-strong)">
@@ -130,12 +161,19 @@ import PageHeader from '../components/common/PageHeader.vue'
 import PermitNotice from '../components/common/PermitNotice.vue'
 import StatusTag from '../components/common/StatusTag.vue'
 import ChecksumPanel from '../components/backfill/ChecksumPanel.vue'
+import LedgerImpactPanel from '../components/backfill/LedgerImpactPanel.vue'
 import { BACKFILL_STATUS } from '../constants/enums'
 import { fetchMeta } from '../api/backfill'
 import { useApi } from '../hooks/useApi'
 import { useAuthStore } from '../stores/auth'
 import { useBackfillStore } from '../stores/backfill'
 import { fmtTime } from '../utils/format'
+
+const ISSUE_LABEL: Record<string, string> = {
+  duplicate_delivery: '重复投递',
+  retract_missing: '撤销缺失',
+  baseline_rewritten: '基准内事件被改写',
+}
 
 const auth = useAuthStore()
 const store = useBackfillStore()

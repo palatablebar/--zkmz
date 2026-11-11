@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS entity_event (
     CONSTRAINT uq_event_natural UNIQUE (entity_key, event_type, event_ts)
 );
 
+-- 事件投递台账的演进定义见 0002_event_ledger_and_backfill_baseline.sql；
+-- 全新建库时 create_all 会直接建成含该表与 backfill 新列的最新结构。
+
 CREATE TABLE IF NOT EXISTS label_set (
     id          SERIAL PRIMARY KEY,
     code        VARCHAR(48) NOT NULL UNIQUE,
